@@ -1,5 +1,7 @@
 import pandas as pd
 from IPython.display import display
+from sklearn.metrics import balanced_accuracy_score, accuracy_score, precision_score, recall_score, f1_score, \
+    confusion_matrix
 
 import utils.IterationUtils as Iter
 from deBruijn.ProbabilityGraph import ProbabilityGraph
@@ -7,18 +9,15 @@ from models.NaiveModel import compute_threshold_alarm
 from utils.PropertyNames import ColumnNames as Cols
 
 
-def generate_confusion_matrix(df: pd.DataFrame, boolean_column: str,
-                              time_range_start: pd.Timedelta = pd.Timedelta(hours=0.5),
-                              time_range_end: pd.Timedelta = pd.Timedelta(hours=1),
-                              max_safe: int = 180, min_safe: int = 70):
+def add_target_column(df: pd.DataFrame,
+                      time_range_start: pd.Timedelta = pd.Timedelta(hours=0.5),
+                      time_range_end: pd.Timedelta = pd.Timedelta(hours=1),
+                      max_safe: int = 180, min_safe: int = 70):
     """
-    Generate confusion matrices for each patient in the dataset.
+    Generate the target column for the data
 
     :param df: Dataframe containing the patient data.
     :type df: pandas.DataFrame
-
-    :param boolean_column: The column of the DataFrame used to classify the data.
-    :type boolean_column: str
 
     :param time_range_start: The start of the time range to check for dangerous values, default is 0.5 hours.
     :type time_range_start: pandas.Timedelta
@@ -38,24 +37,19 @@ def generate_confusion_matrix(df: pd.DataFrame, boolean_column: str,
     False Positive: The alert is on, but none of the data points in the range from that point are at a dangerous value.
     False Negative: The alert is off, but any of the data points in the range from that point are at a dangerous value.
     True Negative: The alert is off, and none of the data points in the range from that point are at a dangerous value.
-    :rtype: tuple
+
+    :rtype: pandas.DataFrame
     """
 
-    # Initialize a dictionary to store the confusion matrices for each patient
-    confusion_matrices = {}
-    counter = 0
     patients = df[Cols.patient].unique()
+
+    df[Cols.target] = None
+    df[Cols.isDangerous] = None
 
     # Loop over each unique patient
     for patient_label_value in patients:
         # Filter the DataFrame for the current patient
         df_patient = df[df[Cols.patient] == patient_label_value].sort_values(Cols.date, ascending=True)
-
-        # Initialize confusion matrix components
-        TP = 0
-        FP = 0
-        FN = 0
-        TN = 0
 
         for index, row in df_patient.iterrows():
             # Calculate the range of dates to check for dangerous values
@@ -65,98 +59,81 @@ def generate_confusion_matrix(df: pd.DataFrame, boolean_column: str,
             # Get the subset of the DataFrame within the range
             df_range = df_patient[(df_patient[Cols.date] > start_date) & (df_patient[Cols.date] < end_date)]
 
-            # Skip if there are no data points in the range
-            if df_range.empty or pd.isna(row[boolean_column]) or row[boolean_column] is None:
-                continue
-
             # Check if there are any dangerous values in the range
             dangerous_in_range = ((df_range[Cols.value] < min_safe) | (df_range[Cols.value] > max_safe)).any()
             self_dangerous = (row[Cols.value] < min_safe) | (row[Cols.value] > max_safe)
 
-            counter += 1
+            # Assign to dataframe columns
+            df.loc[index, Cols.isDangerous] = self_dangerous
+            df.loc[index, Cols.target] = (dangerous_in_range or self_dangerous)
 
-            if self_dangerous:
-                continue
-
-            # Classify the row based on the boolean column and the presence of dangerous values
-            if (row[boolean_column] and dangerous_in_range) or (row[boolean_column] and self_dangerous):
-                TP += 1
-            elif row[boolean_column] and not dangerous_in_range:
-                FP += 1
-            elif not row[boolean_column] and dangerous_in_range:
-                FN += 1
-            elif not row[boolean_column] and not dangerous_in_range:
-                TN += 1
-
-        # Create a confusion matrix
-        confusion_matrix = pd.DataFrame({
-            'Actual Positive': [TP, FN],
-            'Actual Negative': [FP, TN]
-        }, index=['Predicted Positive', 'Predicted Negative'])
-
-        # Store the confusion matrix for the current patient
-        confusion_matrices[patient_label_value] = confusion_matrix
-
-    return confusion_matrices, counter
+    return df
 
 
-def calculate_metrics(confusion_matrix: pd.DataFrame):
+def calculate_metrics(df: pd.DataFrame, alarm_column: str, include_already_dangerous: bool = False):
     """
-    Calculates accuracy, precision, sensitivity, specificity, and F1 score.
+    Calculates confusion matrix, accuracy, balanced accuracy, precision, sensitivity, specificity, and F1 score for a
+    given prediction column.
 
-    :param confusion_matrix: The input confusion matrix.
-    :type confusion_matrix: pandas.DataFrame
+    :param df: The input confusion matrix.
+    :type df: pandas.DataFrame
+
+    :param alarm_column: Name of the alarm column to be evaluated
+    :type alarm_column: str
+
+    :param include_already_dangerous: Include dangerous rows in evaluation. Note: Setting this parameter as True will
+    bloat the metrics.
+    :type include_already_dangerous: bool
 
     :return: A dictionary of the calculated metrics.
     :rtype: dict
     """
-    # Initialize a dictionary to store the metrics for each patient
+    # Creating a copy of the original dataframe
+    df_clean = df.copy()
 
-    # Compute the metrics
-    TP, FN = confusion_matrix['Actual Positive']
-    FP, TN = confusion_matrix['Actual Negative']
+    # Removing None values from the predicted column
+    df_clean = df_clean.dropna(subset=[alarm_column])
 
-    accuracy = (TP + TN) / (TP + FP + TN + FN)
-    precision = TP / (TP + FP)
-    sensitivity = TP / (TP + FN)
-    specificity = TN / (TN + FP)
-    f1_score = 2 * (precision * sensitivity) / (precision + sensitivity)
+    # If the parameter is set False only include non-dangerous columns
+    if not include_already_dangerous:
+        df_clean = df_clean[df_clean[Cols.isDangerous] == False]
 
-    # Store the metrics for the current patient
-    metrics = {
+    # Convert the boolean column to integer if not
+    if df_clean[alarm_column].dtype == 'bool':
+        df_clean[alarm_column] = df_clean[alarm_column].astype(int)
+
+    # Defining true and predicted values
+    true_values = df_clean[Cols.target].tolist()
+    predicted_values = df_clean[alarm_column].tolist()
+
+    # Calculating metrics
+    accuracy = accuracy_score(true_values, predicted_values)
+    bal_accuracy = balanced_accuracy_score(true_values, predicted_values)
+    precision = precision_score(true_values, predicted_values)
+    recall = recall_score(true_values, predicted_values)  # Sensitivity
+    f1 = f1_score(true_values, predicted_values)
+
+    # Calculating confusion matrix
+    tn, fp, fn, tp = confusion_matrix(true_values, predicted_values).ravel()
+
+    # Calculating specificity
+    specificity = tn / (tn + fp)
+
+    # Creating the confusion matrix dataframe
+    total_confusion_matrix = pd.DataFrame({
+        'Actual Positive': [tp, fn],
+        'Actual Negative': [fp, tn]
+    }, index=['Predicted Positive', 'Predicted Negative'])
+
+    return {
         'Accuracy': accuracy,
+        'Balanced Accuracy': bal_accuracy,
         'Precision': precision,
-        'Sensitivity': sensitivity,
+        'Sensitivity': recall,
         'Specificity': specificity,
-        'F1 Score': f1_score,
+        'F1 Score': f1,
+        'Confusion Matrix': total_confusion_matrix
     }
-
-    return metrics
-
-
-def combine_dicts(dicts: list):
-    """
-    Combines the list dictionaries by taking the mean of the values
-
-    :param dicts: A list of dictionaries to combine.
-    :type dicts: list
-
-    :return: A combined dictionary.
-    :rtype: dict
-    """
-    result = {}
-    count = len(dicts)
-    for d in dicts:
-        for key, dict_value in d.items():
-            if key not in result:
-                result[key] = dict_value
-            else:
-                result[key] += dict_value
-
-    for key in result:
-        result[key] /= count
-
-    return result
 
 
 def loo_validation(sequences: list, k: int, risky_chars: set = None, **kwargs):
@@ -220,12 +197,14 @@ def add_alerts(dataframe: pd.DataFrame, naive_threshold: float, **kwargs):
         dataframe.loc[idx, Cols.prob_alert] = probabilistic_alert[i]
 
     dataframe = compute_threshold_alarm(dataframe, naive_threshold)
-    dataframe[Cols.combined_alert] = dataframe[Cols.prob_alert] & dataframe[Cols.naive_alert]
+    dataframe[Cols.combined_alert_or] = dataframe[Cols.prob_alert] | dataframe[Cols.naive_alert]
+    dataframe[Cols.combined_alert_and] = dataframe[Cols.prob_alert] & dataframe[Cols.naive_alert]
 
     return dataframe
 
 
-def benchmark(dataframe: pd.DataFrame, end_time_range_hours: int, start_time_range_hours: int = 0, **kwargs):
+def benchmark(dataframe: pd.DataFrame, end_time_range_hours: int, start_time_range_hours: int = 0,
+              include_already_dangerous=False, **kwargs):
     """
     Benchmarks the all the model and displays all the scores in a table.
 
@@ -238,43 +217,37 @@ def benchmark(dataframe: pd.DataFrame, end_time_range_hours: int, start_time_ran
     :param start_time_range_hours: The start time range for the alerts.
     :type start_time_range_hours: int
 
+    :param include_already_dangerous: Include dangerous rows in evaluation. Note: Setting this parameter as True will
+    bloat the metrics.
+    :type include_already_dangerous: bool
+
     :param kwargs: Parameters for the models.
 
     :return:
     """
     dataframe = add_alerts(dataframe, **kwargs)
+    dataframe = add_target_column(dataframe, time_range_start=pd.Timedelta(hours=start_time_range_hours),
+                                  time_range_end=pd.Timedelta(hours=end_time_range_hours))
 
     df_list = []  # List to store all the score DataFrames
 
-    for alert_column in [Cols.prob_alert, Cols.naive_alert, Cols.combined_alert]:
-        confusion_dict, scored_data_point_counter = generate_confusion_matrix(dataframe, alert_column,
-                                                                              time_range_start=pd.Timedelta(
-                                                                                  hours=start_time_range_hours),
-                                                                              time_range_end=pd.Timedelta(
-                                                                                  hours=end_time_range_hours))
-
-        # Calculate used and skipped data
-        skipped_data = len(dataframe) - scored_data_point_counter
-
-        # Generate scores for each patient key
-        score_list = []
-        for patient_key, confusion in confusion_dict.items():
-            score_list.append(calculate_metrics(confusion))
-
-        # Combine all scores into a single dictionary
-        combined_dict = combine_dicts(score_list)
+    for alert_column in [Cols.prob_alert, Cols.naive_alert, Cols.combined_alert_or, Cols.combined_alert_and]:
+        metrics_dict = calculate_metrics(dataframe, alert_column, include_already_dangerous)
+        confusion_matrix_dataframe = metrics_dict.pop('Confusion Matrix')
 
         # Convert the dictionary into a DataFrame and add a column for the alert type
         alert_type = 'Alert Type'
-        df = pd.DataFrame([combined_dict])
+        df = pd.DataFrame([metrics_dict])
         df[alert_type] = str(alert_column)
         df.insert(0, alert_type, df.pop(alert_type))
-
-        df['Skipped Data'] = f"{skipped_data}/{len(dataframe)}"
 
         # Append the DataFrame to the list of DataFrames
         df_list.append(df)
 
+        print(f'Confusion matrix for {alert_column}')
+        display(confusion_matrix_dataframe)
+
     # Concatenate all DataFrames in the list and print the result
     result_df = pd.concat(df_list, ignore_index=True)
+
     display(result_df)

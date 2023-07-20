@@ -1,3 +1,4 @@
+import networkx as nx
 from networkx.classes.digraph import DiGraph
 
 from deBruijn.DeBruijn import DeBruijnGraph
@@ -34,9 +35,10 @@ class ProbabilityGraph(DeBruijnGraph):
     def get_probability_model(self,
                               risk_threshold: float = 0.5,
                               prune_method: str = None,
-                              prune_threshold: float = None,
+                              prune_threshold: float = 3,
                               max_steps: int = 3,
-                              prune: bool = False):
+                              prune: bool = False,
+                              **prune_args):
         """
         Generates a probability table form the de Bruijn graph. The probability of a node represents the likelihood of
         ending up in a 'dangerous node' after taking `max_steps` steps in the graph.
@@ -60,6 +62,8 @@ class ProbabilityGraph(DeBruijnGraph):
         :param prune: A boolean indicating whether to prune the graph.
         :type prune: bool
 
+        :param prune_args: Other parameters for the prune algorithm.
+
         :return: ProbabilisticModel from the de Bruijn graph
         :rtype: ProbabilisticModel
 
@@ -72,6 +76,8 @@ class ProbabilityGraph(DeBruijnGraph):
                 subgraph = self._path_prune(prune_threshold)
             elif prune_method == Opts.filter:
                 subgraph = self._filter_prune(prune_threshold)
+            elif prune_method == Opts.adaptive:
+                subgraph = self._adaptive_pruning(prune_threshold, **prune_args)
             else:
                 raise ValueError('Unknown prune method!')
         else:
@@ -87,8 +93,6 @@ class ProbabilityGraph(DeBruijnGraph):
         prob_dict = dict()
         for node in subgraph.nodes:
             prob_dict[node] = self._get_probability(subgraph, node, dangerous_nodes, max_steps)
-
-        # draw_hist(list(prob_dict.values()), max_steps, title='Distribution of Probability of Leading Into a Risky Area in {} Steps'.format(title))
 
         return ProbabilisticModel(self.k, prob_dict, risk_threshold, self.risky_chars)
 
@@ -204,3 +208,62 @@ class ProbabilityGraph(DeBruijnGraph):
                 if incoming_edge[1] > threshold:
                     stack.append(incoming_edge[0])
         return traversed_nodes
+
+    def _adaptive_pruning(self, initial_threshold: float, value_ranges=None, weight_thresholds=None):
+        """
+        Implements the adaptive pruning method. This pruning method utilizes the closeness of the edges to the dangerous
+        nodes to prune the graph. The motivation with this approach is lowering the threshold for closer nodes.
+
+        :param initial_threshold: If this parameter is bigger than 1 an initial filter pruning is applied.
+
+        :param value_ranges: Ranges of closeness to be considered. These ranges should be sorted and shouldn't overlap.
+        It should also cover the entire number space. (Starts with 0 ends with infinity or the largest closeness value).
+        The first index of the range is inclusive and the second index is exclusive.
+
+        :param weight_thresholds: Weight thresholds to be applied to each range.
+
+        :raise ValueError: If value_ranges and weight_thresholds parameter shapes do not match
+        :raise ValueError: A possible closeness is not defined in range
+
+        :return: The pruned subgraph.
+        :rtype: networkx.classes.digraph.DiGraph
+        """
+
+        # Set the default parameters for the ranges
+        value_ranges = value_ranges or [(0, 1), (1, 2), (2, float('inf'))]
+        weight_thresholds = weight_thresholds or [1, 2, 5]
+
+        # Assert value_ranges and weight_thresholds are valid
+        if len(value_ranges) != len(weight_thresholds) or not value_ranges:
+            raise ValueError('value_ranges and weight_thresholds have invalid shape!')
+
+        dangerous_nodes = {node for node in self.graph if any(char in node for char in self.risky_chars)}
+        subgraph = self._filter_prune(initial_threshold) if initial_threshold > 1 else self.graph.copy()
+
+        # Compute closeness_properties for subgraph
+        closeness_properties = nx.multi_source_dijkstra_path_length(nx.reverse(subgraph), dangerous_nodes,
+                                                                    weight=lambda *args: 1)
+
+        included_nodes = set()
+
+        # Iterate over the edges of the copy
+        for edge in subgraph.edges:
+            leading_node = edge[1]
+
+            if leading_node not in closeness_properties.keys():
+                continue  # Node is not reachable
+
+            closeness = closeness_properties[leading_node]
+            edge_weight = subgraph.edges[edge][Props.weight]
+
+            # Find the correct range for the edge
+            for (min_closeness, max_closeness), weight_threshold in zip(value_ranges, weight_thresholds):
+                if min_closeness <= closeness < max_closeness:
+                    if edge_weight >= weight_threshold:
+                        included_nodes.update(edge)
+                    break
+            else:
+                raise ValueError(f'Range not defined for the closeness {closeness}')
+
+        subgraph = self.graph.subgraph(included_nodes)
+        return subgraph
