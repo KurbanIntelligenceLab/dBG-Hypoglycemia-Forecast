@@ -1,7 +1,7 @@
 import pandas as pd
 from IPython.display import display
 from sklearn.metrics import balanced_accuracy_score, accuracy_score, precision_score, recall_score, f1_score, \
-    confusion_matrix
+    confusion_matrix, roc_auc_score
 
 import utils.IterationUtils as Iter
 from deBruijn.ProbabilityGraph import ProbabilityGraph
@@ -10,7 +10,7 @@ from utils.PropertyNames import ColumnNames as Cols
 
 
 def add_target_column(df: pd.DataFrame,
-                      time_range_start: pd.Timedelta = pd.Timedelta(hours=0.5),
+                      time_range_start: pd.Timedelta = pd.Timedelta(hours=0),
                       time_range_end: pd.Timedelta = pd.Timedelta(hours=1),
                       max_safe: int = 180, min_safe: int = 70):
     """
@@ -59,6 +59,10 @@ def add_target_column(df: pd.DataFrame,
             # Get the subset of the DataFrame within the range
             df_range = df_patient[(df_patient[Cols.date] > start_date) & (df_patient[Cols.date] < end_date)]
 
+            if len(df_range) == 0:
+                # No such point exists to evaluate
+                continue
+
             # Check if there are any dangerous values in the range
             dangerous_in_range = ((df_range[Cols.value] < min_safe) | (df_range[Cols.value] > max_safe)).any()
             self_dangerous = (row[Cols.value] < min_safe) | (row[Cols.value] > max_safe)
@@ -92,7 +96,7 @@ def calculate_metrics(df: pd.DataFrame, alarm_column: str, include_already_dange
     df_clean = df.copy()
 
     # Removing None values from the predicted column
-    df_clean = df_clean.dropna(subset=[alarm_column])
+    df_clean = df_clean.dropna(subset=[alarm_column, Cols.target])
 
     # If the parameter is set False only include non-dangerous columns
     if not include_already_dangerous:
@@ -112,6 +116,7 @@ def calculate_metrics(df: pd.DataFrame, alarm_column: str, include_already_dange
     precision = precision_score(true_values, predicted_values)
     recall = recall_score(true_values, predicted_values)  # Sensitivity
     f1 = f1_score(true_values, predicted_values)
+    auc_roc = roc_auc_score(true_values, predicted_values)
 
     # Calculating confusion matrix
     tn, fp, fn, tp = confusion_matrix(true_values, predicted_values).ravel()
@@ -128,6 +133,7 @@ def calculate_metrics(df: pd.DataFrame, alarm_column: str, include_already_dange
     return {
         'Accuracy': accuracy,
         'Balanced Accuracy': bal_accuracy,
+        'AUC-ROC': auc_roc,
         'Precision': precision,
         'Sensitivity': recall,
         'Specificity': specificity,

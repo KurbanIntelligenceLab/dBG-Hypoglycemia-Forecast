@@ -53,7 +53,8 @@ def draw_histogram(values: list, title: str, x_label: str, y_label: str, **kwarg
 
 def draw_timeline(df: pd.DataFrame, patient: str, column: str):
     """
-    Draws and displays the timeline of alerts. Highlights the datapoints with alert with red.
+    Draws and displays the timeline of alerts. Highlights the datapoints with alert with red. Skipped datapoints are
+    grey.
 
     :param df: Dataframe with the alert labels
     :type df: pandas.DataFrame
@@ -66,7 +67,6 @@ def draw_timeline(df: pd.DataFrame, patient: str, column: str):
 
     :return:
     """
-    df = df.dropna()
     # Assume df is your DataFrame, and it already has datetime, value and flag columns
     df[Cols.date] = pd.to_datetime(df[Cols.date])  # convert to datetime if not already
     df = df.sort_values(Cols.date)  # sort the data based on datetime
@@ -74,7 +74,7 @@ def draw_timeline(df: pd.DataFrame, patient: str, column: str):
     plt.figure(figsize=(30, 10))  # set the size of the figure
 
     # Create color array
-    colors = np.where(df[column], 'red', 'blue')
+    colors = np.where(df[column].isna() | df[Cols.target].isna(), 'grey', np.where(df[column], 'red', 'blue'))
 
     # Plot segments in different colors
     for i in range(len(df[Cols.date]) - 1):
