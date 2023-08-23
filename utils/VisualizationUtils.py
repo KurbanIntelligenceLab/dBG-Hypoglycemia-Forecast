@@ -1,5 +1,4 @@
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
 
@@ -25,7 +24,8 @@ def draw_histogram(values: list, title: str, x_label: str, y_label: str, **kwarg
     :return:
     """
     # create histogram
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(15, 12))
+
     counts, bins, patches = plt.hist(values, alpha=0.7, rwidth=0.85, **kwargs)
 
     # label x-axis and y-axis
@@ -34,6 +34,7 @@ def draw_histogram(values: list, title: str, x_label: str, y_label: str, **kwarg
 
     # title the histogram
     plt.title(title)
+    plt.xticks(bins, rotation=45)
 
     # show the values at the top of each bar
     bin_centers = 0.5 * (bins[:-1] + bins[1:])
@@ -51,7 +52,7 @@ def draw_histogram(values: list, title: str, x_label: str, y_label: str, **kwarg
     plt.show()
 
 
-def draw_timeline(df: pd.DataFrame, patient: str, column: str):
+def draw_timeline(df: pd.DataFrame, patient: str, column: str, include_already_dangerous: bool = True):
     """
     Draws and displays the timeline of alerts. Highlights the datapoints with alert with red. Skipped datapoints are
     grey.
@@ -73,26 +74,49 @@ def draw_timeline(df: pd.DataFrame, patient: str, column: str):
 
     plt.figure(figsize=(30, 10))  # set the size of the figure
 
+    colors = list()
+
     # Create color array
-    colors = np.where(df[column].isna() | df[Cols.target].isna(), 'grey', np.where(df[column], 'red', 'blue'))
+    for _, row in df.iterrows():
+        column_bool = None if pd.isna(row[Cols.prob_alert]) or pd.isna(Cols.naive_alert) or pd.isna(
+            Cols.combined_alert_or) or pd.isna(Cols.combined_alert_and) else bool(row[column])
+        target_bool = None if pd.isna(row[Cols.target]) else bool(row[Cols.target])
+        is_dangerous_bool = None if pd.isna(row[Cols.isDangerous]) else bool(row[Cols.isDangerous])
+        if column_bool is None or target_bool is None or (not include_already_dangerous and is_dangerous_bool):
+            colors.append('grey')
+        elif column_bool is True and target_bool is True:
+            colors.append('green')
+        elif column_bool is True and target_bool is False:
+            colors.append('orange')
+        elif column_bool is False and target_bool is True:
+            colors.append('red')
+        elif column_bool is False and target_bool is False:
+            colors.append('blue')
+        else:
+            raise ValueError('Unexpected Value!')
 
     # Plot segments in different colors
     for i in range(len(df[Cols.date]) - 1):
         plt.plot_date(df[Cols.date].iloc[i:i + 2], df[Cols.value].iloc[i:i + 2], color=colors[i], linestyle='solid')
 
     # Add horizontal lines
-    plt.axhline(y=70, color='green', linestyle='dotted')
-    plt.axhline(y=180, color='green', linestyle='dotted')
+    plt.axhline(y=70, color='black', linestyle='dotted')
+    # plt.axhline(y=180, color='black', linestyle='dotted')
 
-    custom_lines = [Line2D([0], [0], color='blue', lw=2),
+    custom_lines = [Line2D([0], [0], color='green', lw=2),
                     Line2D([0], [0], color='red', lw=2),
-                    Line2D([0], [0], color='green', lw=2, linestyle='dotted')]
-    plt.legend(custom_lines, ['No Alert', 'Alert', 'Hypo/Hyper-glycine Limits'])
+                    Line2D([0], [0], color='orange', lw=2),
+                    Line2D([0], [0], color='blue', lw=2),
+                    Line2D([0], [0], color='grey', lw=2),
+                    Line2D([0], [0], color='black', lw=2, linestyle='dotted')]
+    plt.legend(custom_lines,
+               ['True Positive', 'False Negative', 'False Positive', 'True Negative', 'Not Used in Evaluation',
+                'Hypoglycemia Limit'])
 
     plt.gcf().autofmt_xdate()  # auto-format the x-axis dates
 
-    plt.title(f'{patient} Timeline of Blood Sugar')  # set the title of the plot
+    plt.title(f'{patient} Timeline of Blood Glucose')  # set the title of the plot
     plt.xlabel('Time')  # set the x-axis label
-    plt.ylabel('Blood Sugar')  # set the y-axis label
+    plt.ylabel('Blood Glucose (mg/dL)')  # set the y-axis label
 
     plt.show()

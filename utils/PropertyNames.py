@@ -7,6 +7,7 @@ class ColumnNames:
     A simple data class that stores the column names of the parsed dataframe.
 
     :ivar date: Time of the datapoint. Default is 'Date'.
+    :ivar date_gap: Date gap since the last datapoint
     :ivar patient: The patient name. Default is 'Patient'.
     :ivar value: The value of the blood sugar. Default is 'Value'.
     :ivar isDangerous: Is the current value of blood suger considered dangerous?
@@ -22,6 +23,7 @@ class ColumnNames:
     """
 
     date: str = 'Date'
+    date_gap: str = 'Date_Gap'
     patient: str = 'Patient'
     value: str = 'Value'
     isDangerous: str = 'Dangerous'
@@ -30,10 +32,12 @@ class ColumnNames:
     char: str = 'Char'
     target: str = 'Target'
     char_norep: str = 'Char_No_Repeat'
+
     prob_alert: str = 'Probabilistic_Alert'
     naive_alert: str = 'Naive_Alert'
     combined_alert_or: str = 'Combined_Alert_Or'
     combined_alert_and: str = 'Combined_Alert_And'
+    alert_columns = [prob_alert, naive_alert, combined_alert_or, combined_alert_and, target]
 
 
 @dataclass

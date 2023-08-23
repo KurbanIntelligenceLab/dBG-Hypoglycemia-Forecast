@@ -85,7 +85,7 @@ def parse_dataset(dataset_directory: str, custom_bins: list = None, silent: bool
         file_paths = glob.glob(dataset_directory + "/*.xlsx")
 
         # Initialize the dataframe
-        data_df = pd.DataFrame(columns=[Cols.date, Cols.value, Cols.diff, Cols.disc, Cols.patient])
+        data_df = pd.DataFrame()
 
         # Iterate over files
         for i, file_path in enumerate(file_paths):
@@ -113,6 +113,9 @@ def parse_dataset(dataset_directory: str, custom_bins: list = None, silent: bool
             # Sort by `date` just in case
             sheet_df.sort_values(Cols.date, ascending=True, inplace=True)
 
+            # Define `date` gap
+            sheet_df[Cols.date_gap] = sheet_df[Cols.date].diff()
+
             # Define `diff` column
             sheet_df[Cols.diff] = sheet_df[Cols.value].diff()
             sheet_df[Cols.disc] = pd.cut(sheet_df[Cols.value], bins=custom_bins)
@@ -123,6 +126,9 @@ def parse_dataset(dataset_directory: str, custom_bins: list = None, silent: bool
 
             # Concatenate `data_df` by `sheet_df`
             data_df = pd.concat([data_df, sheet_df], ignore_index=True)
+
+        # Define `isDangerous` column
+        data_df[Cols.isDangerous] = data_df[Cols.value] < 70
 
         # Before defining the char `char` column we sort the intervals, so we can define `char` based on the `value`
         intervals = sorted(data_df[Cols.disc].unique().tolist(), key=lambda x: x.left)

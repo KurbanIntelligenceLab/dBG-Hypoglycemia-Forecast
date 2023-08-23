@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from IPython.display import display
 from sklearn.metrics import balanced_accuracy_score, accuracy_score, precision_score, recall_score, f1_score, \
@@ -5,14 +6,13 @@ from sklearn.metrics import balanced_accuracy_score, accuracy_score, precision_s
 
 import utils.IterationUtils as Iter
 from deBruijn.ProbabilityGraph import ProbabilityGraph
-from models.NaiveModel import compute_threshold_alarm
+from models.Supervise import compute_threshold_alarm
 from utils.PropertyNames import ColumnNames as Cols
 
 
 def add_target_column(df: pd.DataFrame,
                       time_range_start: pd.Timedelta = pd.Timedelta(hours=0),
-                      time_range_end: pd.Timedelta = pd.Timedelta(hours=1),
-                      max_safe: int = 180, min_safe: int = 70):
+                      time_range_end: pd.Timedelta = pd.Timedelta(hours=1)):
     """
     Generate the target column for the data
 
@@ -24,12 +24,6 @@ def add_target_column(df: pd.DataFrame,
 
     :param time_range_end: The end of the time range to check for dangerous values, default is 1 hour.
     :type time_range_end: pandas.Timedelta
-
-    :param max_safe: The maximum safe value, values above are considered dangerous, default is 180.
-    :type max_safe: int
-
-    :param min_safe: The minimum safe value, values below are considered dangerous, default is 70.
-    :type min_safe: int
 
     :return: A dictionary of confusion matrices for each patient and the counter for the rows in the DataFrame.
 
@@ -43,8 +37,7 @@ def add_target_column(df: pd.DataFrame,
 
     patients = df[Cols.patient].unique()
 
-    df[Cols.target] = None
-    df[Cols.isDangerous] = None
+    df[Cols.target] = np.nan
 
     # Loop over each unique patient
     for patient_label_value in patients:
@@ -64,12 +57,10 @@ def add_target_column(df: pd.DataFrame,
                 continue
 
             # Check if there are any dangerous values in the range
-            dangerous_in_range = ((df_range[Cols.value] < min_safe) | (df_range[Cols.value] > max_safe)).any()
-            self_dangerous = (row[Cols.value] < min_safe) | (row[Cols.value] > max_safe)
+            dangerous_in_range = (df_range[Cols.isDangerous] == True).any()
 
             # Assign to dataframe columns
-            df.loc[index, Cols.isDangerous] = self_dangerous
-            df.loc[index, Cols.target] = (dangerous_in_range or self_dangerous)
+            df.loc[index, Cols.target] = (bool(dangerous_in_range) or bool(row[Cols.isDangerous]))
 
     return df
 
@@ -95,16 +86,12 @@ def calculate_metrics(df: pd.DataFrame, alarm_column: str, include_already_dange
     # Creating a copy of the original dataframe
     df_clean = df.copy()
 
-    # Removing None values from the predicted column
-    df_clean = df_clean.dropna(subset=[alarm_column, Cols.target])
+    # Removing None values from the x and y columns
+    df_clean = df_clean.dropna(subset=Cols.alert_columns)
 
     # If the parameter is set False only include non-dangerous columns
     if not include_already_dangerous:
         df_clean = df_clean[df_clean[Cols.isDangerous] == False]
-
-    # Convert the boolean column to integer if not
-    if df_clean[alarm_column].dtype == 'bool':
-        df_clean[alarm_column] = df_clean[alarm_column].astype(int)
 
     # Defining true and predicted values
     true_values = df_clean[Cols.target].tolist()
@@ -162,15 +149,20 @@ def loo_validation(sequences: list, k: int, risky_chars: set = None, **kwargs):
     """
     probabilistic_alert = list()
     for train_data, test_data in Iter.loo_partition(sequences):
+        list_patient_result = list()
+        # Convert 3D list into 2D
+        train_data = [item for sublist in train_data for item in sublist]
         probability_graph = ProbabilityGraph(k, train_data, risky_chars)
         probability_model = probability_graph.get_probability_model(**kwargs)
-        probabilistic_alert.append(probability_model.get_alerts(test_data))
+        for test_sequence in test_data:
+            list_patient_result.append(probability_model.get_alerts(test_sequence))
+        probabilistic_alert.append(list_patient_result)
     return probabilistic_alert
 
 
 def add_alerts(dataframe: pd.DataFrame, naive_threshold: float, **kwargs):
     """
-    Adds all alert outputs from all models to the DataFrame.
+    Adds all alert outputs from all models to the DataFrame. Split sequences if the date gap is more than 20 minutes
 
     :param dataframe: The input DataFrame.
     :type dataframe: pandas.DataFrame
@@ -185,31 +177,53 @@ def add_alerts(dataframe: pd.DataFrame, naive_threshold: float, **kwargs):
     """
     patients = dataframe[Cols.patient].unique()
     sequences = []
-    for p in patients:
-        float_seq = dataframe[dataframe[Cols.patient] == p]
-        float_seq = float_seq.sort_values(Cols.date, ascending=True)[Cols.char]
-        sequences.append(float_seq)
+    sequence_indexes = []
 
+    for p in patients:
+        patient_sequences = []
+        patient_sequence_indexes = []
+        float_seq = dataframe[dataframe[Cols.patient] == p]
+        float_seq = float_seq.sort_values(Cols.date, ascending=True)[[Cols.date_gap, Cols.char]]
+
+        sequence = []
+        indexes = []
+
+        for index, row in float_seq.iterrows():
+            date_gap = row[Cols.date_gap]
+            seq_char = row[Cols.char]
+            if pd.isna(date_gap) or (date_gap < pd.Timedelta(minutes=20)):
+                # If the date gap is smaller than 20 minutes, append the sequence
+                sequence.append(seq_char)
+                indexes.append(index)
+            elif len(sequence) > kwargs['k']:
+                # Create a new sequence if the gap is more than 20 minutes
+                patient_sequences.append(sequence)
+                patient_sequence_indexes.append(indexes)
+                sequence = []
+                indexes = []
+
+        # Ignore if the sequence is shorter than k
+        if len(sequence) > kwargs['k']:
+            patient_sequences.append(sequence)
+            patient_sequence_indexes.append(indexes)
+
+        sequences.append(patient_sequences)
+        sequence_indexes.append(patient_sequence_indexes)
     probabilistic_alert = loo_validation(sequences, **kwargs)
 
-    for i, p in enumerate(patients):
-        # get the indices of the rows for the patient p
-        idx = dataframe[dataframe[Cols.patient] == p].sort_values(Cols.date, ascending=True)[Cols.char].index
-
-        if len(idx) != len(probabilistic_alert[i]):
-            raise Exception('Invalid Format!')
-
-        # set the 'Alert' column for these rows
-        dataframe.loc[idx, Cols.prob_alert] = probabilistic_alert[i]
+    for sequence_index, prob_alerts in zip(sequence_indexes, probabilistic_alert):
+        for indexes, alerts in zip(sequence_index, prob_alerts):
+            dataframe.loc[indexes, Cols.prob_alert] = alerts
 
     dataframe = compute_threshold_alarm(dataframe, naive_threshold)
+
     dataframe[Cols.combined_alert_or] = dataframe[Cols.prob_alert] | dataframe[Cols.naive_alert]
     dataframe[Cols.combined_alert_and] = dataframe[Cols.prob_alert] & dataframe[Cols.naive_alert]
 
     return dataframe
 
 
-def benchmark(dataframe: pd.DataFrame, end_time_range_hours: int, start_time_range_hours: int = 0,
+def benchmark(dataframe: pd.DataFrame, end_time_range_hours: float, start_time_range_hours: float = 0,
               include_already_dangerous=False, **kwargs):
     """
     Benchmarks the all the model and displays all the scores in a table.
@@ -218,10 +232,10 @@ def benchmark(dataframe: pd.DataFrame, end_time_range_hours: int, start_time_ran
     :type dataframe: pandas.DataFrame
 
     :param end_time_range_hours: The end time range for the alerts.
-    :type end_time_range_hours: int
+    :type end_time_range_hours: float
 
     :param start_time_range_hours: The start time range for the alerts.
-    :type start_time_range_hours: int
+    :type start_time_range_hours: float
 
     :param include_already_dangerous: Include dangerous rows in evaluation. Note: Setting this parameter as True will
     bloat the metrics.
