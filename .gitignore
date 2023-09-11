@@ -1,3 +1,5 @@
 /.idea
 /.ipynb_checkpoints
 /venv
+rsync_bigred.sh
+slurm_run.sh
