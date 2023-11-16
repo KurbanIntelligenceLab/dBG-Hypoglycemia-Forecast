@@ -271,3 +271,4 @@ def benchmark(dataframe: pd.DataFrame, end_time_range_hours: float, start_time_r
     result_df = pd.concat(df_list, ignore_index=True)
 
     display(result_df)
+    return result_df

@@ -120,3 +120,41 @@ def draw_timeline(df: pd.DataFrame, patient: str, column: str, include_already_d
     plt.ylabel('Blood Glucose (mg/dL)')  # set the y-axis label
 
     plt.show()
+
+def draw_timeline_no_colors(df: pd.DataFrame, patient: str, colname:str, hypo_line=70):
+    """
+    Draws and displays the timeline of alerts. Highlights the datapoints with alert with red. Skipped datapoints are
+    grey.
+
+    :param df: Dataframe with the alert labels
+    :type df: pandas.DataFrame
+
+    :param patient: The patient to use
+    :type patient: str
+
+    :param column: Name of the column to use it as alert
+    :type column: str
+
+    :return:
+    """
+    # Assume df is your DataFrame, and it already has datetime, value and flag columns
+    df[Cols.date] = pd.to_datetime(df[Cols.date])  # convert to datetime if not already
+    df = df.sort_values(Cols.date)  # sort the data based on datetime
+
+    plt.figure(figsize=(5, 10))  # set the size of the figure
+
+    # Plot segments in different colors
+    for i in range(len(df[Cols.date]) - 1):
+        plt.plot_date(df[Cols.date].iloc[i:i + 2], df[colname].iloc[i:i + 2], color='blue', linestyle='solid')
+
+    # Add horizontal lines
+    # plt.axhline(y=hypo_line, color='black', linestyle='dotted')
+    # plt.axhline(y=180, color='black', linestyle='dotted')
+
+    plt.gcf().autofmt_xdate()  # auto-format the x-axis dates
+
+    plt.title(f'{patient} Timeline of Blood Glucose')  # set the title of the plot
+    plt.xlabel('Time')  # set the x-axis label
+    plt.ylabel('Blood Glucose (mg/dL)')  # set the y-axis label
+
+    plt.show()

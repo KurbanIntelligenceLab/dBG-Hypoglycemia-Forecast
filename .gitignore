@@ -2,5 +2,6 @@
 /.ipynb_checkpoints
 /venv
 /Data
+/out_logs
 rsync_bigred.sh
 slurm_run.sh

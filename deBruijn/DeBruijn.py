@@ -44,6 +44,44 @@ class DeBruijnGraph:
                 alphabet.add(character)
         return alphabet
 
+    def update_graph(self, new_sequences: list, c):
+        """
+        Update the De Bruijn graph with new sequences.
+
+        :param new_sequences: The list of new sequences to update the graph.
+        :type new_sequences: list
+        :raises ValueError: If the list of new sequences is empty.
+        """
+        if not new_sequences:
+            raise ValueError('No new sequences provided!')
+
+        # Add new sequences to the existing sequences
+        self.sequences.extend(new_sequences)
+
+        # Update alphabet
+        for sequence in new_sequences:
+            for character in sequence:
+                self.alphabet.add(character)
+
+        # Update the existing graph with new sequences
+        prev = None
+        for sequence in new_sequences:
+            for index, current in enumerate(Iter.sliding_window(sequence, self.k - 1)):
+                if index == 0:
+                    prev = current
+                    continue
+                # Increment the edge weight by 1 if it already exists in graph
+                if self.graph.has_edge(prev, current):
+                    self.graph.edges[prev, current][Props.weight] += 1
+                else:
+                    # Create an edge with 1 weight if it does not exist in the graph
+                    edge_attributes = {
+                        Props.weight: c * 1.0,
+                        Props.tuple: (prev + current[-1:])
+                    }
+                    self.graph.add_edge(prev, current, **edge_attributes)
+                prev = current
+
     def _generate_graph(self):
         """
         Generates the De Bruijn graph from the sequences.
