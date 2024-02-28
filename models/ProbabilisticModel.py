@@ -39,11 +39,14 @@ class ProbabilisticModel:
         :rtype: list
         """
         alerts = [None] * len(sequence)
+        probs = [None] * len(sequence)
 
         for j, tuple_substr in enumerate(Iter.sliding_window(sequence, self.k - 1)):
             probability = self.get_probability(tuple_substr)
             alerts[j + self.k - 2] = probability > self.risk_threshold
-        return alerts
+            probs[j + self.k - 2] = probability
+
+        return alerts, probs
 
     def get_probability(self, query: tuple):
         """

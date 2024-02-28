@@ -64,7 +64,6 @@ def add_target_column(df: pd.DataFrame,
 
     return df
 
-
 def calculate_metrics(df: pd.DataFrame, alarm_column: str, include_already_dangerous: bool = False):
     """
     Calculates confusion matrix, accuracy, balanced accuracy, precision, sensitivity, specificity, and F1 score for a
@@ -126,7 +125,7 @@ def calculate_metrics(df: pd.DataFrame, alarm_column: str, include_already_dange
         'Specificity': specificity,
         'F1 Score': f1,
         'Confusion Matrix': total_confusion_matrix
-    }
+    }, true_values, predicted_values
 
 
 def loo_validation(sequences: list, k: int, risky_chars: set = None, **kwargs):
@@ -148,16 +147,21 @@ def loo_validation(sequences: list, k: int, risky_chars: set = None, **kwargs):
     :rtype: list
     """
     probabilistic_alert = list()
+    probabilistic_prob = list()
     for train_data, test_data in Iter.loo_partition(sequences):
         list_patient_result = list()
+        list_prob_result = list()
         # Convert 3D list into 2D
         train_data = [item for sublist in train_data for item in sublist]
         probability_graph = ProbabilityGraph(k, train_data, risky_chars)
         probability_model = probability_graph.get_probability_model(**kwargs)
         for test_sequence in test_data:
-            list_patient_result.append(probability_model.get_alerts(test_sequence))
+            alerts, probs = probability_model.get_alerts(test_sequence)
+            list_patient_result.append(alerts)
+            list_prob_result.append(probs)
         probabilistic_alert.append(list_patient_result)
-    return probabilistic_alert
+        probabilistic_prob.append(list_prob_result)
+    return probabilistic_alert, probabilistic_prob
 
 
 def add_alerts(dataframe: pd.DataFrame, naive_threshold: float, **kwargs):
@@ -209,11 +213,12 @@ def add_alerts(dataframe: pd.DataFrame, naive_threshold: float, **kwargs):
 
         sequences.append(patient_sequences)
         sequence_indexes.append(patient_sequence_indexes)
-    probabilistic_alert = loo_validation(sequences, **kwargs)
+    probabilistic_alert, probabilistic_prob = loo_validation(sequences, **kwargs)
 
-    for sequence_index, prob_alerts in zip(sequence_indexes, probabilistic_alert):
-        for indexes, alerts in zip(sequence_index, prob_alerts):
+    for sequence_index, prob_alerts, probabilities in zip(sequence_indexes, probabilistic_alert, probabilistic_prob):
+        for indexes, alerts, probs in zip(sequence_index, prob_alerts, probabilities):
             dataframe.loc[indexes, Cols.prob_alert] = alerts
+            dataframe.loc[indexes, Cols.prob_alert+'_Prob'] = probs
 
     dataframe = compute_threshold_alarm(dataframe, naive_threshold)
 
@@ -246,15 +251,17 @@ def benchmark(dataframe: pd.DataFrame, end_time_range_hours: float, start_time_r
     :return:
     """
     dataframe = add_alerts(dataframe, **kwargs)
+
     dataframe = add_target_column(dataframe, time_range_start=pd.Timedelta(hours=start_time_range_hours),
                                   time_range_end=pd.Timedelta(hours=end_time_range_hours))
 
     df_list = []  # List to store all the score DataFrames
+    roc_dict = dict()
 
     for alert_column in [Cols.prob_alert, Cols.naive_alert, Cols.combined_alert_or, Cols.combined_alert_and]:
-        metrics_dict = calculate_metrics(dataframe, alert_column, include_already_dangerous)
+        metrics_dict, y_true, y_pred = calculate_metrics(dataframe, alert_column, include_already_dangerous)
         confusion_matrix_dataframe = metrics_dict.pop('Confusion Matrix')
-
+        roc_dict[alert_column] = (y_true, y_pred)
         # Convert the dictionary into a DataFrame and add a column for the alert type
         alert_type = 'Alert Type'
         df = pd.DataFrame([metrics_dict])
@@ -271,4 +278,4 @@ def benchmark(dataframe: pd.DataFrame, end_time_range_hours: float, start_time_r
     result_df = pd.concat(df_list, ignore_index=True)
 
     display(result_df)
-    return result_df
+    return result_df, roc_dict, dataframe
