@@ -4,7 +4,7 @@ This repository contains a Python implementation of our reinforcement learning f
 
 Refer to `dBGEvaluation.ipynb` for a guide on how to run our code.
 
-Use Python 3.8 or higher. To download the dependencies:
+Tested with Python 3.10 but, it will probably work most 3.x versions. To download the dependencies:
 
 
 ```bash
