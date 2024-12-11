@@ -1,6 +1,6 @@
-# A Reinforcement Learning Approach  to Effective Forecasting  of Pediatric Hypoglycemia in Diabetes I Patients: an extended de Bruijn Graph
+# A reinforcement learning approach to effective forecasting of pediatric hypoglycemia in diabetes I patients using an extended de Bruijn graph
 
-This repository contains a Python implementation of our reinforcement learning forecasting model based on the De Bruijn graph.
+This repository contains a Python implementation of our reinforcement learning forecasting model based on the de Bruijn graph.
 
 Refer to `dBGEvaluation.ipynb` for a guide on how to run our code.
 
