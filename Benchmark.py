@@ -86,7 +86,7 @@ def calculate_metrics(df: pd.DataFrame, alarm_column: str, include_already_dange
     df_clean = df.copy()
 
     # Removing None values from the x and y columns
-    df_clean = df_clean.dropna(subset=Cols.alert_columns)
+    df_clean = df_clean.dropna(subset=[Cols.target, alarm_column])
 
     # If the parameter is set False only include non-dangerous columns
     if not include_already_dangerous:
